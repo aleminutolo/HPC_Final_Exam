@@ -63,6 +63,11 @@ int main(int argc, char *argv[]) {
             part_buffer[index] = mandelbrot(x, y, max_iterations);
         }
     }
+    
+    double global_end_time = MPI_Wtime();
+    if(world_rank == 0) {
+       printf("%f\n", global_end_time - global_start_time);
+    }
 
     // Prepare for MPI_Gatherv
     int *recvcounts = NULL;
@@ -86,11 +91,6 @@ int main(int argc, char *argv[]) {
                 image_buffer, recvcounts, displs, MPI_UNSIGNED_CHAR,
                 0, MPI_COMM_WORLD);
     free(part_buffer);
-
-    double global_end_time = MPI_Wtime();
-    if(world_rank == 0) {
-       printf("%f\n", global_end_time - global_start_time);
-    }
 
     if (world_rank == 0) {
         // Root process final operations here
