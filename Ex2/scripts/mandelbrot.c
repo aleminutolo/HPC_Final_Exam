@@ -54,7 +54,7 @@ int main(int argc, char *argv[]) {
 
     unsigned char* part_buffer = (unsigned char*)malloc(width * (end_row - start_row) * sizeof(unsigned char));
 
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(dynamic)
     for (int j = start_row; j < end_row; j++) {
         for (int i = 0; i < width; i++) {
             double x = x_left + i * (x_right - x_left) / width;
