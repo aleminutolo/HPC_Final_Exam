@@ -27,9 +27,9 @@ int main(int argc, char *argv[]) {
 
     double global_start_time = MPI_Wtime();
 
-    int width = 800, height = 600;
-    double x_left = -2.0, x_right = 1.0, y_lower = -1.0, y_upper = 1.0;
-    int max_iterations = 255;
+    int width, height;
+    double x_left, x_right, y_lower, y_upper;
+    int max_iterations;
     int world_size, world_rank, num_threads;
 
     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
@@ -44,17 +44,23 @@ int main(int argc, char *argv[]) {
         y_upper = atof(argv[6]);
         max_iterations = atoi(argv[7]);
         num_threads = atoi(argv[8]);
-        omp_set_num_threads(num_threads);
+    } else {
+        if (world_rank == 0) {
+            printf("Usage: %s width height x_left y_lower x_right y_upper max_iterations num_threads\n", argv[0]);
+        }
+        MPI_Finalize();
+        exit(1);
     }
-
+    omp_set_num_threads(num_threads);
     int rows_per_process = height / world_size;
     int remainder_rows = height % world_size;
     int start_row = world_rank * rows_per_process + (world_rank < remainder_rows ? world_rank : remainder_rows);
     int end_row = start_row + rows_per_process + (world_rank < remainder_rows ? 1 : 0);
 
-    unsigned char* part_buffer = (unsigned char*)malloc(width * (end_row - start_row) * sizeof(unsigned char));
+    int num_rows = end_row - start_row;
+    unsigned char* part_buffer = (unsigned char*)malloc(width * num_rows * sizeof(unsigned char));
 
-#pragma omp parallel for schedule(dynamic)
+    #pragma omp parallel for schedule(dynamic)
     for (int j = start_row; j < end_row; j++) {
         for (int i = 0; i < width; i++) {
             double x = x_left + i * (x_right - x_left) / width;
@@ -63,19 +69,14 @@ int main(int argc, char *argv[]) {
             part_buffer[index] = mandelbrot(x, y, max_iterations);
         }
     }
-    
-    double global_end_time = MPI_Wtime();
-    if(world_rank == 0) {
-       printf("%f\n", global_end_time - global_start_time);
-    }
 
     // Prepare for MPI_Gatherv
     int *recvcounts = NULL;
     int *displs = NULL;
     unsigned char *image_buffer = NULL;
     if (world_rank == 0) {
-        recvcounts = malloc(world_size * sizeof(int));
-        displs = malloc(world_size * sizeof(int));
+        recvcounts = (int*)malloc(world_size * sizeof(int));
+        displs = (int*)malloc(world_size * sizeof(int));
         int displacement = 0;
         for (int i = 0; i < world_size; i++) {
             int rows_for_process = rows_per_process + (i < remainder_rows ? 1 : 0);
@@ -83,27 +84,36 @@ int main(int argc, char *argv[]) {
             displs[i] = displacement;
             displacement += recvcounts[i];
         }
-        image_buffer = (unsigned char*)malloc(displacement * sizeof(unsigned char));  // 'displacement' now equals total size
+        image_buffer = (unsigned char*)malloc(width * height * sizeof(unsigned char));
     }
 
     MPI_Barrier(MPI_COMM_WORLD);  // Synchronize all processes before gathering data
-    MPI_Gatherv(part_buffer, width * (end_row - start_row), MPI_UNSIGNED_CHAR,
+    MPI_Gatherv(part_buffer, width * num_rows, MPI_UNSIGNED_CHAR,
                 image_buffer, recvcounts, displs, MPI_UNSIGNED_CHAR,
                 0, MPI_COMM_WORLD);
+
     free(part_buffer);
 
     if (world_rank == 0) {
         // Root process final operations here
         FILE *file = fopen("image.pgm", "w");
-        fprintf(file, "P5\n%d %d\n255\n", width, height);
-        fwrite(image_buffer, sizeof(unsigned char), width * height, file);
-        fclose(file);
+        if (file) {
+            fprintf(file, "P5\n%d %d\n255\n", width, height);
+            fwrite(image_buffer, sizeof(unsigned char), width * height, file);
+            fclose(file);
+        } else {
+            printf("Error: Could not open file for writing\n");
+        }
         free(image_buffer);
         free(recvcounts);
         free(displs);
     }
 
+    double global_end_time = MPI_Wtime();
+    if (world_rank == 0) {
+        printf("Execution Time: %f seconds\n", global_end_time - global_start_time);
+    }
+
     MPI_Finalize();
     return 0;
 }
-
